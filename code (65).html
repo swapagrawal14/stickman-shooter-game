@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Stickman Shooter</title>
+<style>
+body {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: #000;
+    font-family: 'Courier New', Courier, monospace;
+    color: white;
+    overflow: hidden;
+}
+
+#game-container {
+    position: relative;
+    width: 100%;
+    max-width: 1000px;
+    height: 100%;
+    max-height: 600px;
+    border: 2px solid #fff;
+    box-shadow: 0 0 20px #fff;
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background-color: #333;
+}
+
+#ui-container {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 24px;
+    pointer-events: none;
+}
+
+#message-box {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 30px;
+    border-radius: 15px;
+    text-align: center;
+    font-size: 36px;
+    display: none;
+    flex-direction: column;
+    gap: 15px;
+    width: 80%;
+    max-width: 500px;
+    z-index: 200; /* Ensure message box is on top */
+}
+
+#message-box button {
+    padding: 10px 20px;
+    font-size: 18px;
+    background: #ff4500;
+    border: 2px solid #fff;
+    color: #fff;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.3s, transform 0.1s;
+}
+
+#message-box button:hover { background: #ff6347; }
+#message-box button:active { transform: scale(0.95); }
+#message-box button:disabled { background: #888; cursor: not-allowed; }
+
+#button-container { display: flex; gap: 15px; justify-content: center; margin-top: 10px; }
+
+#mission-briefing {
+    display: none; 
+    font-size: 16px; 
+    line-height: 1.4; 
+    margin-top: 10px;
+    max-height: 150px; 
+    overflow-y: auto; 
+    text-align: left; 
+    padding: 15px;
+    background: rgba(0,0,0,0.4); 
+    border-radius: 8px; 
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* On-Screen Controls */
+#touch-controls {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    pointer-events: none; /* Container doesn't block */
+    z-index: 100;
+}
+
+.control-cluster { display: flex; gap: 20px; }
+
+.ctrl-btn {
+    width: 60px;
+    height: 60px;
+    background: rgba(255, 255, 255, 0.3);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    color: white;
+    user-select: none;
+    pointer-events: all; /* Buttons are clickable */
+}
+
+.ctrl-btn:active {
+    background: rgba(255, 255, 255, 0.6);
+    transform: scale(0.95);
+}
+
+#action-buttons {
+    gap: 30px;
+    align-items: center;
+}
+
+#jump-btn {
+    width: 80px;
+    height: 80px;
+}
+</style>
+</head>
+<body>
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-container">
+        <div id="score">Score: 0</div>
+        <div id="lives">Lives: 3</div>
+    </div>
+    <div id="message-box">
+        <div id="message-text">Game Over</div>
+        <div id="mission-briefing"></div>
+        <div id="button-container">
+            <button id="restart-button">Restart</button>
+            <button id="generate-mission-button">✨ Generate Mission</button>
+        </div>
+    </div>
+    <!-- On-Screen Controls HTML -->
+    <div id="touch-controls">
+        <div class="control-cluster" id="move-buttons">
+            <div class="ctrl-btn" id="left-btn">◀</div>
+            <div class="ctrl-btn" id="right-btn">▶</div>
+        </div>
+        <div class="control-cluster" id="action-buttons">
+            <div class="ctrl-btn" id="shoot-btn">X</div>
+            <div class="ctrl-btn" id="jump-btn">▲</div>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- Canvas & UI Elements ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const gameContainer = document.getElementById('game-container');
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const messageBox = document.getElementById('message-box');
+const messageText = document.getElementById('message-text');
+const restartButton = document.getElementById('restart-button');
+const generateMissionButton = document.getElementById('generate-mission-button');
+const missionBriefingEl = document.getElementById('mission-briefing');
+
+// --- Game State ---
+let score = 0;
+let lives = 3;
+let gameOver = false;
+let gameStarted = false;
+const gravity = 0.6;
+const groundHeight = 50;
+
+// --- Player Object ---
+const player = {
+    x: 100, y: 0, width: 40, height: 80, // Height includes head
+    speed: 5, dx: 0, dy: 0, jumpPower: -15,
+    isJumping: false, direction: 'right', shootCooldown: 0,
+};
+
+// --- Game Object Arrays ---
+let bullets = [];
+let enemies = [];
+let particles = [];
+
+// --- Background ---
+const backgroundLayers = [
+    { speed: 0.2, y: 0, height: 300, color: 'rgba(50, 50, 100, 0.5)', offset: 0 },
+    { speed: 0.5, y: 200, height: 200, color: 'rgba(80, 80, 150, 0.5)', offset: 0 },
+    { speed: 1.0, y: 350, height: 150, color: 'rgba(120, 120, 200, 0.5)', offset: 0 },
+];
+
+// --- Input Handling (Keyboard & Touch) ---
+const keys = { ArrowRight: false, ArrowLeft: false, Space: false, KeyX: false };
+
+window.addEventListener('keydown', (e) => { if (keys[e.code] !== undefined) keys[e.code] = true; if(e.code === 'Space') e.preventDefault(); });
+window.addEventListener('keyup', (e) => { if (keys[e.code] !== undefined) keys[e.code] = false; });
+
+function setupTouchControls() {
+    const leftBtn = document.getElementById('left-btn');
+    const rightBtn = document.getElementById('right-btn');
+    const jumpBtn = document.getElementById('jump-btn');
+    const shootBtn = document.getElementById('shoot-btn');
+
+    leftBtn.addEventListener('touchstart', (e) => { e.preventDefault(); keys.ArrowLeft = true; }, { passive: false });
+    leftBtn.addEventListener('touchend', (e) => { e.preventDefault(); keys.ArrowLeft = false; }, { passive: false });
+    
+    rightBtn.addEventListener('touchstart', (e) => { e.preventDefault(); keys.ArrowRight = true; }, { passive: false });
+    rightBtn.addEventListener('touchend', (e) => { e.preventDefault(); keys.ArrowRight = false; }, { passive: false });
+
+    jumpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); keys.Space = true; }, { passive: false });
+    jumpBtn.addEventListener('touchend', (e) => { e.preventDefault(); keys.Space = false; }, { passive: false });
+    
+    shootBtn.addEventListener('touchstart', (e) => { e.preventDefault(); keys.KeyX = true; }, { passive: false });
+    shootBtn.addEventListener('touchend', (e) => { e.preventDefault(); keys.KeyX = false; }, { passive: false });
+}
+
+// --- Character Drawing ---
+function drawStickman(x, y, direction, isPlayer = true) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    const headRadius = 20;
+    const bodyLength = 40;
+    const limbLength = 30;
+
+    const scaleX = direction === 'right' ? 1 : -1;
+    ctx.scale(scaleX, 1);
+    
+    // Body and legs
+    ctx.strokeStyle = isPlayer ? 'deepskyblue' : 'tomato';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, -bodyLength); ctx.lineTo(0, 0); // body
+    ctx.moveTo(0, 0); ctx.lineTo(-20, limbLength); // leg
+    ctx.moveTo(0, 0); ctx.lineTo(20, limbLength); // leg
+    ctx.stroke();
+
+    // Head
+    ctx.beginPath();
+    ctx.arc(0, -bodyLength, headRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke();
+    
+    // Player-specific details (face)
+    if (isPlayer) {
+        ctx.fillStyle = '#000'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(-10, -bodyLength - 5); ctx.lineTo(-4, -bodyLength - 10); // angry eye
+        ctx.moveTo(10, -bodyLength - 5); ctx.lineTo(4, -bodyLength - 10); // angry eye
+        ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, -bodyLength + 8, 8, Math.PI * 0.1, Math.PI * 0.9, true); // frown
+        ctx.stroke();
+    }
+    
+    // Arms (holding gun)
+    ctx.strokeStyle = isPlayer ? 'deepskyblue' : 'tomato';
+    ctx.beginPath(); ctx.moveTo(0, -bodyLength + 10); ctx.lineTo(-25, -15); ctx.stroke();
+
+    // Gun
+    ctx.strokeStyle = '#888'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(0, -bodyLength + 15); ctx.lineTo(40, -bodyLength + 10);
+    ctx.stroke();
+    ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(15, -bodyLength + 13); ctx.lineTo(10, -bodyLength + 25);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+// --- Game Object Classes ---
+class Bullet {
+    constructor(x, y, direction) {
+        this.x = x; this.y = y; this.width = 10; this.height = 5;
+        this.speed = 15; this.direction = direction; this.color = 'yellow';
+    }
+    update() { this.x += (this.direction === 'right'? this.speed: -this.speed); }
+    draw() {
+        ctx.fillStyle = this.color; ctx.shadowColor = 'orange';
+        ctx.shadowBlur = 10; ctx.fillRect(this.x, this.y, this.width, this.height);
+        ctx.shadowBlur = 0;
+    }
+}
+
+class Enemy {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.width = 40; this.height = 80;
+        this.speed = Math.random() * 2 + 1; this.direction = 'left';
+    }
+    update() { this.x -= this.speed; }
+    draw() { drawStickman(this.x, this.y, this.direction, false); }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x; this.y = y; this.size = Math.random() * 5 + 2;
+        this.color = color; this.dx = (Math.random() - 0.5) * 8;
+        this.dy = (Math.random() - 0.5) * 8; this.life = 50;
+    }
+    update() { this.x += this.dx; this.y += this.dy; this.life--; }
+    draw() {
+        ctx.fillStyle = this.color; ctx.globalAlpha = this.life / 50;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill(); ctx.globalAlpha = 1.0;
+    }
+}
+
+// --- Gemini API ---
+async function generateMission() {
+    generateMissionButton.disabled = true; generateMissionButton.textContent = "Generating...";
+    missionBriefingEl.style.display = 'block'; missionBriefingEl.innerHTML = '<em>Contacting HQ...</em>';
+
+    // PASTE YOUR GEMINI API KEY HERE
+    const apiKey = "";
+    if (!apiKey) {
+        missionBriefingEl.textContent = "API Key not found. Please add your Gemini API key to the script to use this feature.";
+        generateMissionButton.disabled = false; generateMissionButton.textContent = "✨ Regenerate Mission";
+        return;
+    }
+
+    const prompt = "Generate a short, exciting mission briefing for a retro 2D side-scrolling shooter game. The player is a lone stickman hero fighting an evil stickman army. Keep it under 80 words. Make it sound like a classic 80s action movie.";
+    
+    try {
+        const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+        
+        const response = await fetch(apiUrl, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(payload) 
+        });
+
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        
+        const result = await response.json();
+        
+        if (result.candidates && result.candidates[0]?.content?.parts[0]?.text) {
+            missionBriefingEl.textContent = result.candidates[0].content.parts[0].text;
+        } else { 
+            throw new Error("Invalid API response."); 
+        }
+    } catch (error) {
+        console.error("Error generating mission:", error);
+        missionBriefingEl.textContent = "Radio silence from HQ. Proceed with standard protocol: shoot everything that moves.";
+    } finally {
+        generateMissionButton.disabled = false; generateMissionButton.textContent = "✨ Regenerate Mission";
+    }
+}
+
+// --- Game Logic ---
+function resizeCanvas() {
+    canvas.width = gameContainer.clientWidth; 
+    canvas.height = gameContainer.clientHeight;
+    player.y = canvas.height - groundHeight - player.height / 2;
+}
+
+function drawBackground() {
+    const skyGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    skyGradient.addColorStop(0, '#001'); 
+    skyGradient.addColorStop(0.7, '#246');
+    skyGradient.addColorStop(1, '#357');
+    ctx.fillStyle = skyGradient; 
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    backgroundLayers.forEach(layer => {
+        ctx.fillStyle = layer.color; 
+        const layerWidth = canvas.width * 2;
+        const xPos = layer.offset % layerWidth;
+        ctx.fillRect(-xPos, layer.y, layerWidth, layer.height);
+        ctx.fillRect(layerWidth - xPos, layer.y, layerWidth, layer.height);
+    });
+
+    ctx.fillStyle = '#4a2e1d'; 
+    ctx.fillRect(0, canvas.height - groundHeight, canvas.width, groundHeight);
+    ctx.fillStyle = '#5a3e2d'; 
+    ctx.fillRect(0, canvas.height - groundHeight, canvas.width, 10);
+}
+
+function updatePlayer() {
+    if (gameOver) return;
+
+    if (keys.ArrowRight) { player.dx = player.speed; player.direction = 'right'; }
+    else if (keys.ArrowLeft) { player.dx = -player.speed; player.direction = 'left'; }
+    else { player.dx = 0; }
+
+    player.x += player.dx; 
+    player.dy += gravity; 
+    player.y += player.dy;
+
+    if (keys.Space && !player.isJumping) { 
+        player.dy = player.jumpPower; 
+        player.isJumping = true; 
+    }
+
+    if (player.shootCooldown > 0) { player.shootCooldown--; }
+    if (keys.KeyX && player.shootCooldown === 0) {
+        const gunTipOffset = player.direction === 'right' ? 40 : -40;
+        const bulletX = player.x + gunTipOffset; 
+        const bulletY = player.y - player.height / 2 + 5;
+        bullets.push(new Bullet(bulletX, bulletY, player.direction));
+        player.shootCooldown = 15;
+    }
+
+    if (player.x < 20) { player.x = 20; }
+    if (player.x > canvas.width - 20) { player.x = canvas.width - 20; }
+
+    if (player.y + player.height / 2 > canvas.height - groundHeight) {
+        player.y = canvas.height - groundHeight - player.height / 2;
+        player.dy = 0; 
+        player.isJumping = false;
+    }
+
+    if (keys.ArrowRight && player.x > canvas.width / 2) {
+        backgroundLayers.forEach(layer => { layer.offset += player.speed * layer.speed; });
+        enemies.forEach(enemy => enemy.x -= player.speed);
+        player.x -= player.speed;
+    }
+}
+
+function handleEnemies() {
+    if (Math.random() < 0.02 && !gameOver) {
+        const enemyY = canvas.height - groundHeight - 40;
+        const enemyX = canvas.width + 50;
+        enemies.push(new Enemy(enemyX, enemyY));
+    }
+    enemies.forEach((enemy, index) => {
+        enemy.update(); 
+        enemy.draw();
+        if (enemy.x + enemy.width < 0) { enemies.splice(index, 1); }
+    });
+}
+
+function handleBullets() { 
+    bullets.forEach((b, i) => { 
+        b.update(); 
+        b.draw(); 
+        if (b.x > canvas.width || b.x < 0) bullets.splice(i, 1); 
+    }); 
+}
+
+function handleParticles() { 
+    particles.forEach((p, i) => { 
+        p.update(); 
+        p.draw(); 
+        if(p.life <= 0) particles.splice(i, 1); 
+    }); 
+}
+
+function checkCollisions() {
+    if(gameOver) return;
+    
+    // Bullets vs Enemies
+    bullets.forEach((bullet, bIndex) => {
+        enemies.forEach((enemy, eIndex) => {
+            if (Math.abs(bullet.x - enemy.x) < enemy.width / 2 && Math.abs(bullet.y - (enemy.y - enemy.height / 2)) < enemy.height / 2) {
+                for(let i = 0; i < 15; i++) { 
+                    particles.push(new Particle(enemy.x, enemy.y - enemy.height / 2, 'tomato')); 
+                }
+                enemies.splice(eIndex, 1); 
+                bullets.splice(bIndex, 1);
+                score += 100; 
+                updateUI();
+            }
+        });
+    });
+
+    // Player vs Enemies
+    enemies.forEach((enemy) => {
+        if (Math.abs(player.x - enemy.x) < (player.width + enemy.width) / 2 &&
+            Math.abs(player.y - enemy.y) < (player.height + enemy.height) / 2) {
+            for(let i = 0; i < 25; i++) { 
+                particles.push(new Particle(player.x, player.y, 'deepskyblue')); 
+            }
+            playerHit();
+        }
+    });
+}
+
+function playerHit() {
+    lives--; 
+    updateUI();
+    if (lives <= 0) { 
+        endGame(); 
+    } else {
+        player.x = 100; 
+        player.y = canvas.height - groundHeight - player.height / 2;
+        player.dy = 0; 
+        enemies = [];
+    }
+}
+
+function updateUI() {
+    scoreEl.textContent = `Score: ${score}`;
+    livesEl.textContent = `Lives: ${lives}`;
+}
+
+function showStartMessage() {
+    messageText.textContent = "Stickman Shooter";
+    restartButton.textContent = "Start Game";
+    generateMissionButton.textContent = "✨ Generate Mission";
+    generateMissionButton.style.display = 'inline-block';
+    missionBriefingEl.style.display = 'none'; 
+    missionBriefingEl.textContent = '';
+    messageBox.style.display = 'flex';
+}
+
+function startGame() {
+    resetGame();
+    messageBox.style.display = 'none';
+    gameStarted = true; 
+    gameOver = false;
+    gameLoop();
+}
+
+function endGame() {
+    gameOver = true; 
+    gameStarted = false;
+    messageText.textContent = `Game Over! Score: ${score}`;
+    restartButton.textContent = "Restart";
+    generateMissionButton.style.display = 'none';
+    missionBriefingEl.style.display = 'none';
+    messageBox.style.display = 'flex';
+}
+
+function resetGame() {
+    score = 0; 
+    lives = 3; 
+    gameOver = false;
+    player.x = 100; 
+    player.y = canvas.height - groundHeight - player.height / 2;
+    player.dy = 0; 
+    player.isJumping = false;
+    bullets = []; 
+    enemies = []; 
+    particles = [];
+    backgroundLayers.forEach(l => l.offset = 0);
+    updateUI();
+}
+
+function gameLoop() {
+    if (!gameStarted || gameOver) return;
+    requestAnimationFrame(gameLoop);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    drawBackground(); 
+    handleEnemies(); 
+    handleBullets();
+    updatePlayer();
+    drawStickman(player.x, player.y, player.direction, true);
+    handleParticles(); 
+    checkCollisions();
+}
+
+// --- Event Handlers for UI Buttons ---
+function handleStart(e) { e.preventDefault(); startGame(); }
+function handleGenerate(e) { e.preventDefault(); generateMission(); }
+
+// --- Initial Setup ---
+window.onload = function() {
+    resizeCanvas();
+    setupTouchControls();
+    
+    // Add both click and touchstart listeners for menu buttons
+    restartButton.addEventListener('click', handleStart);
+    restartButton.addEventListener('touchstart', handleStart, { passive: false });
+    
+    generateMissionButton.addEventListener('click', handleGenerate);
+    generateMissionButton.addEventListener('touchstart', handleGenerate, { passive: false });
+    
+    showStartMessage();
+};
+
+window.onresize = resizeCanvas;
+
+</script>
+</body>
+</html>
